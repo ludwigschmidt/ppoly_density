@@ -1,2 +1,7 @@
 *.pyc
 *.swp
+*.ipynb
+*.gch
+*.o
+*.so
+ellipsoid_cpp.py
