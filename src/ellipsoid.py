@@ -557,8 +557,8 @@ def plot_distribution(distribution, (l, r), fig=None, color='blue'):
   return fig
 
 
-def plot_mixture_with_samples(mixture, samples, (a, b)):
-  fig = plot_mixture(mixture, (a, b))
+def plot_distribution_with_samples(distribution, samples, (a, b)):
+  fig = plot_distribution(distribution, (a, b))
   ax = fig.get_axes()[0]
   stemval = ax.get_ylim()[1] / 10.0
   ys = [stemval] * len(samples)
