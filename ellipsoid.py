@@ -8,6 +8,7 @@ import numpy.linalg
 import matplotlib.pyplot as plt
 import scipy
 import scipy.interpolate
+import scipy.integrate
 import scipy.stats
 import scipy.optimize
 import cvxopt
@@ -361,6 +362,82 @@ def spline_plot(splines, (a, b), fig=None, colors=['green', 'red', 'blue']):
   return fig
 
 
+class gmm_distribution:
+  def __init__(self, params):
+    self.params = params
+
+  def get_pdf(self):
+    return get_mixture_pdf(self.params)
+
+  def draw_samples(self, n):
+    return sample_from_mixture(self.params, n)
+
+
+class normal_distribution:
+  def __init__(self, mean, variance):
+    self.mean = mean
+    self.variance = variance
+
+  def get_pdf(self):
+    def pdf(x):
+      return scipy.stats.norm.pdf(x, loc=self.mean, scale=self.variance)
+    return pdf
+
+  def draw_samples(self, n):
+    return np.random.normal(self.mean, self.variance, n)
+
+
+class beta_distribution:
+  def __init__(self, a, b):
+    self.a = a
+    self.b = b
+
+  def get_pdf(self):
+    def pdf(x):
+      return scipy.stats.beta.pdf(x, a=self.a, b=self.b)
+    return pdf
+
+  def draw_samples(self, n):
+    return numpy.random.beta(self.a, self.b, n)
+
+
+class gamma_distribution:
+  def __init__(self, shape, scale):
+    self.shape = shape
+    self.scale = scale
+
+  def get_pdf(self):
+    def pdf(x):
+      return scipy.stats.gamma.pdf(x, self.shape, scale=self.scale)
+    return pdf
+
+  def draw_samples(self, n):
+    return numpy.random.gamma(self.shape, self.scale, n)
+
+
+class mixture_distribution:
+  def __init__(self, components, weights):
+    self.components = components
+    self.weights = weights
+
+  def get_pdf(self):
+    def pdf(x):
+      component_pdfs = [comp.get_pdf() for comp in self.components]
+      y = self.weights[0] * component_pdfs[0](x)
+      for ii in range(1, len(self.weights)):
+        y += self.weights[ii] * component_pdfs[ii](x)
+      return y
+    return pdf
+
+  def draw_samples(self, n):
+    samples = np.array([])
+    comp_indices = np.random.multinomial(n, self.weights)
+    for ii, num in enumerate(comp_indices):
+      samples = np.append(samples, self.components[ii].draw_samples(num))
+    np.random.shuffle(samples)
+    return samples
+
+
 def get_mixture_pdf(mixture):
   def pdf(x):
     m0 = mixture[0]
@@ -382,12 +459,23 @@ def get_ppoly_pdf(ppoly):
   return pdf
 
 
+
 def compute_l1_mc(pdf1, pdf2, (a, b), num_points):
   samples = np.random.uniform(a, b, num_points)
   val1 = pdf1(samples)
   val2 = pdf2(samples)
   diff = np.abs(val1 - val2)
   return (b - a) / num_points * np.sum(diff)
+
+
+def compute_l1_quad(pdf1, pdf2, (a, b)):
+  func = lambda x : np.abs(pdf1(x) - pdf2(x))
+#  integral, err = scipy.integrate.quadrature(func, a, b, vec_func=True, maxiter=70, tol=1e-10)
+#  integral, err = scipy.integrate.quadrature(func, a, b, vec_func=True, maxiter=70, tol=1e-10)
+#  print(err)
+#  integral, _ = scipy.integrate.fixed_quad(func, a, b, n=200)
+  integral = scipy.integrate.romberg(func, a, b, vec_func=True, tol=1e-5, divmax=30)
+  return integral
 
 
 def fit_spline(ppoly, num_points, degree):
@@ -456,16 +544,15 @@ def sample_multiple_from(c, (a, b), n):
   return sorted(samples)
 
 
-def plot_mixture(mixture, (a, b), fig=None, color='blue'):
+def plot_distribution(distribution, (l, r), fig=None, color='blue'):
   num_points = 300
-  xs = np.linspace(a, b, num_points)
-  ys = np.zeros(num_points)
-  for m in mixture:
-    ys += m[0] * scipy.stats.norm.pdf(xs, loc=m[1], scale=m[2])
+  xs = np.linspace(l, r, num_points)
+  pdf = distribution.get_pdf()
+  ys = pdf(xs)
   if fig is None: 
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    ax.set_xlim(a, b)
+    ax.set_xlim(l, r)
   ax.plot(xs, ys, color=color)
   return fig
 
