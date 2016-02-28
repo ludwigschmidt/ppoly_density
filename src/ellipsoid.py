@@ -82,7 +82,7 @@ def ellipsoid_method(E, oracle, L):
   return False, E, num_iter
 
 
-def find_analytic_center(A, b, x0):
+def find_analytic_center(A, b, x0, gap_tolerance=1e-7):
   m = b.size
   n = x0.size
 
@@ -108,7 +108,7 @@ def find_analytic_center(A, b, x0):
   gap = lp_sol[-1]
   x0 = lp_sol[:-1]
 
-  if gap < 1e-7:
+  if gap < gap_tolerance:
 #    print('WARNING: no analytic center found')
     return 'empty', Ap, b, gap
   
@@ -202,7 +202,7 @@ def find_analytic_center(A, b, x0):
   return 'success', x, H, num_iter
 
 
-def accmp_basic(dim, bound, oracle, num_iter=10, verbose=False):
+def accmp_basic(dim, bound, oracle, num_iter=10, verbose=False, gap_tolerance=1e-7):
 #  sqbound = math.sqrt(bound)
   C = np.vstack((np.eye(dim), -np.eye(dim)))
   d = bound * np.ones(2 * dim)
@@ -219,7 +219,7 @@ def accmp_basic(dim, bound, oracle, num_iter=10, verbose=False):
 #    print('C = {}'.format(str(C)))
 #    print('d = {}'.format(str(d)))
 #    status, query, H, n_newton = find_analytic_center(C, d, x_best)
-    res = find_analytic_center(C, d, x_best)
+    res = find_analytic_center(C, d, x_best, gap_tolerance=gap_tolerance)
     if res[0] == 'empty':
       return x_best, val_best, num_oracle_calls, total_num_newton_iter
     if res[0] == 'error':
@@ -783,7 +783,7 @@ def pp_patch(ppoly, eps, samples, force_boundaries_to_zero=False):
 
 HypothesisPiece = collections.namedtuple('HypothesisPiece', ['left', 'right', 'left_sample_index', 'right_sample_index', 'hypothesis'])
 
-def pp_learning(target_num_pieces, d, initial_num_pieces, (a, b), samples, ak_delta=0.001, verbose=0, num_akproj_iter=25, akproj_upper_bound=-1):
+def pp_learning(target_num_pieces, d, initial_num_pieces, (a, b), samples, ak_delta=0.001, verbose=0, akproj_num_iter=25, akproj_upper_bound=-1, akproj_gap_tolerance=1e-7):
   # Initial partitioning
   n = len(samples)
   samples_per_piece = n // initial_num_pieces
@@ -810,7 +810,7 @@ def pp_learning(target_num_pieces, d, initial_num_pieces, (a, b), samples, ak_de
       right = (samples[right_sample_index - 1] + samples[right_sample_index]) / 2.0
 #    print((left, right, left_sample_index, right_sample_index, ak_delta))
 #    hypothesis, _, _ = project_Ak(d, d, (left, right), samples[left_sample_index : right_sample_index], sample_weight=sample_weight, delta=ak_delta, verbose=(verbose >= 3))
-    hypothesis, _, num_oracle, num_newton = project_Ak_accmp(d, d, (left, right), samples[left_sample_index : right_sample_index], sample_weight=sample_weight, verbose=(verbose >= 3), num_iter=num_akproj_iter, upper_bound=akproj_upper_bound)
+    hypothesis, _, num_oracle, num_newton = project_Ak_accmp(d, d, (left, right), samples[left_sample_index : right_sample_index], sample_weight=sample_weight, verbose=(verbose >= 3), num_iter=akproj_num_iter, upper_bound=akproj_upper_bound, gap_tolerance=akproj_gap_tolerance)
     if verbose >= 1:
       print('num oracle = {}  num_newton = {}\n'.format(num_oracle, num_newton))
     cur = HypothesisPiece(left, right, left_sample_index, right_sample_index, hypothesis)
@@ -835,7 +835,7 @@ def pp_learning(target_num_pieces, d, initial_num_pieces, (a, b), samples, ak_de
       right_sample_index = cur_intervals[2 * ii + 1].right_sample_index
       #print('Input to Akproj: {}, {}, ({}, {}), samples from {} to {}, {}, {}'.format(d, d, left, right, left_sample_index, right_sample_index, sample_weight, ak_delta))
 #      hypothesis, _, _ = project_Ak(d, d, (left, right), samples[left_sample_index : right_sample_index], sample_weight=sample_weight, delta=ak_delta, verbose=(verbose >= 2))
-      hypothesis, _, num_oracle, num_newton = project_Ak_accmp(d, d, (left, right), samples[left_sample_index : right_sample_index], sample_weight=sample_weight, verbose=(verbose >= 2), num_iter=num_akproj_iter, upper_bound=akproj_upper_bound)
+      hypothesis, _, num_oracle, num_newton = project_Ak_accmp(d, d, (left, right), samples[left_sample_index : right_sample_index], sample_weight=sample_weight, verbose=(verbose >= 2), num_iter=akproj_num_iter, upper_bound=akproj_upper_bound, gap_tolerance=akproj_gap_tolerance)
       if verbose >= 1:
         print('num oracle = {}  num_newton = {}\n'.format(num_oracle, num_newton))
       err, _ = compute_ak_cpp2(hypothesis, (left, right), samples[left_sample_index : right_sample_index], sample_weight, d)
@@ -954,7 +954,7 @@ def project_A1_linear((a, b), samples, sample_weight=-1, verbose=False, gap=0.00
 
 
 
-def project_Ak_accmp(d, k, (a, b), samples, sample_weight=-1, num_iter=25, verbose=False, upper_bound=-1):
+def project_Ak_accmp(d, k, (a, b), samples, sample_weight=-1, num_iter=25, verbose=False, upper_bound=-1, gap_tolerance=1e-7):
   if sample_weight == -1:
     sample_weight = 1.0 / len(samples)
   if upper_bound < 0:
@@ -962,7 +962,7 @@ def project_Ak_accmp(d, k, (a, b), samples, sample_weight=-1, num_iter=25, verbo
   if verbose:
     print('upper_bound = {}\n'.format(upper_bound))
   oracle = construct_poly_accmp_oracle((a, b), k, samples, sample_weight)
-  res = accmp_basic(d + 1, upper_bound, oracle, num_iter)
+  res = accmp_basic(d + 1, upper_bound, oracle, num_iter, gap_tolerance=gap_tolerance)
   return res
 
 
