@@ -12,6 +12,7 @@ import scipy.integrate
 import scipy.stats
 import scipy.optimize
 import cvxopt
+import sys
 import time
 from matplotlib.patches import Ellipse
 
@@ -186,9 +187,14 @@ def find_analytic_center(A, b, x0, gap_tolerance=1e-7):
 #    print(np.dot(A, x + t * dx) + y + t * dy - b)
     newres = np.concatenate((np.dot(A.transpose(), w + t * dw), w + t * dw - 1.0 / (y + t * dy), np.dot(A, x + t * dx) + y + t * dy - b))
 
+    num_linesearch_iter = 0
     while np.linalg.norm(newres) > (1.0 - alpha * t) * np.linalg.norm(res):
       t = beta * t
       newres = np.concatenate((np.dot(A.transpose(), w + t * dw), w + t * dw - 1.0 / (y + t * dy), np.dot(A, x + t * dx) + y + t * dy - b))
+      num_linesearch_iter += 1
+      if num_linesearch_iter > 100:
+        print('Ran more than 100 iterations of line search, this should probably not happen.')
+        break
 
     x = x + t * dx
     y = y + t * dy
@@ -319,7 +325,29 @@ def poly_nonnegative(c, (a, b)):
   return True, None
 
 
-def poly_plot(polys, (a, b), fig=None, colors=['blue', 'red', 'green'], num_points=300):
+def get_kde_pdf(kde):
+  def pdf(xs):
+    return np.exp(kde.score_samples(xs.reshape(-1, 1)))
+  return pdf
+
+
+def plot_kde(kdes, (a, b), fig=None, colors=['blue', 'red', 'green'], num_points=300):
+  if fig is None:
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.set_xlim(a, b)
+  else:
+    ax = fig.get_axes()[0]
+  xs = np.linspace(a, b, num_points)
+
+  for ii, kde in enumerate(kdes):
+    ys = np.exp(kde.score_samples(xs.reshape(-1, 1)))
+    ax.plot(xs, ys, color=colors[ii])
+
+  return fig
+
+
+def plot_poly(polys, (a, b), fig=None, colors=['blue', 'red', 'green'], num_points=300):
   if fig is None:
     fig = plt.figure()
     ax = fig.add_subplot(111)
@@ -475,6 +503,7 @@ def compute_l1_quad(pdf1, pdf2, (a, b)):
 #  print(err)
 #  integral, _ = scipy.integrate.fixed_quad(func, a, b, n=200)
   integral = scipy.integrate.romberg(func, a, b, vec_func=True, tol=1e-5, divmax=30)
+#  integral, _ = scipy.integrate.quad(func, a, b)
   return integral
 
 
@@ -544,8 +573,7 @@ def sample_multiple_from(c, (a, b), n):
   return sorted(samples)
 
 
-def plot_distribution(distribution, (l, r), fig=None, color='blue'):
-  num_points = 300
+def plot_distribution(distribution, (l, r), fig=None, color='blue', num_points=300):
   xs = np.linspace(l, r, num_points)
   pdf = distribution.get_pdf()
   ys = pdf(xs)
@@ -553,6 +581,8 @@ def plot_distribution(distribution, (l, r), fig=None, color='blue'):
     fig = plt.figure()
     ax = fig.add_subplot(111)
     ax.set_xlim(l, r)
+  else:
+    ax = fig.get_axes()[0]
   ax.plot(xs, ys, color=color)
   return fig
 
@@ -685,7 +715,7 @@ def compute_derivative_coefficients(x, d, num_derivs):
   return res
 
 
-def pp_patch(ppoly, eps, samples, force_boundaries_to_zero=False):
+def pp_patch(ppoly, eps, samples, remove_small_pieces=False, force_boundaries_to_zero=False):
   eps = float(eps)
   n = len(samples)
   d = len(ppoly[0].hypothesis) - 1
@@ -693,7 +723,11 @@ def pp_patch(ppoly, eps, samples, force_boundaries_to_zero=False):
   n_samples_eps = int(eps * n)
 
   # step 1: removing small intervals
-  tmp_ppoly1 = [ppart for ppart in ppoly if ppart.right_sample_index - ppart.left_sample_index > n_samples_eps or (not force_boundaries_to_zero and (ppart.left_sample_index == 0 or ppart.right_sample_index == len(samples)))]
+  if remove_small_pieces:
+    tmp_ppoly1 = [ppart for ppart in ppoly if ppart.right_sample_index - ppart.left_sample_index > n_samples_eps or (not force_boundaries_to_zero and (ppart.left_sample_index == 0 or ppart.right_sample_index == len(samples)))]
+  else:
+    tmp_ppoly1 = [ppart for ppart in ppoly]
+  
   tmp_ppoly2 = []
   for ii in range(len(tmp_ppoly1)):
     cur = tmp_ppoly1[ii]
@@ -795,6 +829,7 @@ def pp_learning(target_num_pieces, d, initial_num_pieces, (a, b), samples, ak_de
   
   if verbose >= 1:
     print('Computing initial pieces')
+    sys.stdout.flush()
 
   last_boundary = a
   last_sample_index = 0
@@ -811,7 +846,7 @@ def pp_learning(target_num_pieces, d, initial_num_pieces, (a, b), samples, ak_de
 #    print((left, right, left_sample_index, right_sample_index, ak_delta))
 #    hypothesis, _, _ = project_Ak(d, d, (left, right), samples[left_sample_index : right_sample_index], sample_weight=sample_weight, delta=ak_delta, verbose=(verbose >= 3))
     hypothesis, _, num_oracle, num_newton = project_Ak_accmp(d, d, (left, right), samples[left_sample_index : right_sample_index], sample_weight=sample_weight, verbose=(verbose >= 3), num_iter=akproj_num_iter, upper_bound=akproj_upper_bound, gap_tolerance=akproj_gap_tolerance)
-    if verbose >= 1:
+    if verbose >= 2:
       print('num oracle = {}  num_newton = {}\n'.format(num_oracle, num_newton))
     cur = HypothesisPiece(left, right, left_sample_index, right_sample_index, hypothesis)
     cur_intervals.append(cur)
@@ -824,9 +859,13 @@ def pp_learning(target_num_pieces, d, initial_num_pieces, (a, b), samples, ak_de
   while len(cur_intervals) > target_num_pieces and not (len(cur_intervals) == target_num_pieces + 1 and len(cur_intervals) % 2 == 1):
     candidates = []
     cur_intervals = intervals[-1]
+    
+    if len(intervals) >= 2 and len(cur_intervals) == len(intervals[-2]):
+      print('ERROR: last merging iteration made no progress. Exiting.\n')
 
     if verbose >= 1:
       print('Current number of intervals: {}'.format(len(cur_intervals)))
+      sys.stdout.flush()
 
     for ii in range(len(cur_intervals) // 2):
       left = cur_intervals[2 * ii].left
@@ -836,7 +875,7 @@ def pp_learning(target_num_pieces, d, initial_num_pieces, (a, b), samples, ak_de
       #print('Input to Akproj: {}, {}, ({}, {}), samples from {} to {}, {}, {}'.format(d, d, left, right, left_sample_index, right_sample_index, sample_weight, ak_delta))
 #      hypothesis, _, _ = project_Ak(d, d, (left, right), samples[left_sample_index : right_sample_index], sample_weight=sample_weight, delta=ak_delta, verbose=(verbose >= 2))
       hypothesis, _, num_oracle, num_newton = project_Ak_accmp(d, d, (left, right), samples[left_sample_index : right_sample_index], sample_weight=sample_weight, verbose=(verbose >= 2), num_iter=akproj_num_iter, upper_bound=akproj_upper_bound, gap_tolerance=akproj_gap_tolerance)
-      if verbose >= 1:
+      if verbose >= 2:
         print('num oracle = {}  num_newton = {}\n'.format(num_oracle, num_newton))
       err, _ = compute_ak_cpp2(hypothesis, (left, right), samples[left_sample_index : right_sample_index], sample_weight, d)
       err = abs(err)
